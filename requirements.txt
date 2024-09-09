@@ -1,0 +1,4 @@
+Flask
+replicate
+python-dotenv
+Pillow

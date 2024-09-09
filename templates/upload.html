@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FLUX Model Fine-tuning and Usage</title>
+    <style>
+        .tab {
+            overflow: hidden;
+            border: 1px solid #ccc;
+            background-color: #f1f1f1;
+        }
+        .tab button {
+            background-color: inherit;
+            float: left;
+            border: none;
+            outline: none;
+            cursor: pointer;
+            padding: 14px 16px;
+            transition: 0.3s;
+        }
+        .tab button:hover {
+            background-color: #ddd;
+        }
+        .tab button.active {
+            background-color: #ccc;
+        }
+        .tabcontent {
+            display: none;
+            padding: 6px 12px;
+            border: 1px solid #ccc;
+            border-top: none;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            color: #666666;
+        }
+        button:enabled {
+            background-color: #000000;
+            color: #ffffff;
+        }
+        #useModelForm {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        #useModelForm input,
+        #useModelForm textarea {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+
+        #useModelForm textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        #modelName,
+        #modelVersion {
+            width: 100%;
+        }
+
+        #prompt {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>FLUX Model Fine-tuning and Usage</h1>
+    
+    <div class="tab">
+        <button class="tablinks" onclick="openTab(event, 'FineTune')" id="defaultOpen">Fine-tune Model</button>
+        <button class="tablinks" onclick="openTab(event, 'UseModel')">Use Fine-tuned Model</button>
+    </div>
+
+    <div id="FineTune" class="tabcontent">
+        <h2>Upload Images for FLUX Model Fine-tuning</h2>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" name="images" id="imageInput" multiple required>
+            <button type="submit" id="uploadButton">Upload Images</button>
+        </form>
+        <div id="fineTuneSection" style="display: none;">
+            <input type="text" id="username" placeholder="Enter your username" value="test" required>
+            <button id="fineTuneButton">Start Fine-tuning</button>
+        </div>
+    </div>
+
+    <div id="UseModel" class="tabcontent">
+        <h2>Use Fine-tuned FLUX Model</h2>
+        <form id="useModelForm">
+            <div>
+                <input type="text" id="modelName" placeholder="Enter fine-tuned model name" required>
+                <input type="text" id="modelVersion" placeholder="Enter model version" required>
+            </div>
+            <div>
+                <textarea id="prompt" rows="5" placeholder="Enter your prompt (remember to use the trigger word to activate fine-tuned concept)" required></textarea>
+            </div>
+            <button type="submit" id="generateButton">Generate Image</button>
+        </form>
+        <div id="generatedImage"></div>
+    </div>
+
+    <p id="message"></p>
+
+    <script>
+        // Existing JavaScript code
+        const uploadForm = document.getElementById('uploadForm');
+        const fineTuneSection = document.getElementById('fineTuneSection');
+        const fineTuneButton = document.getElementById('fineTuneButton');
+        const usernameInput = document.getElementById('username');
+        const messageElement = document.getElementById('message');
+        const uploadButton = document.getElementById('uploadButton');
+        const imageInput = document.getElementById('imageInput');
+
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            uploadButton.disabled = true;
+            const formData = new FormData(uploadForm);
+            
+            try {
+                const response = await fetch('/', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                messageElement.textContent = data.message;
+                fineTuneSection.style.display = 'block';
+                fineTuneButton.disabled = false;
+            } catch (error) {
+                messageElement.textContent = 'Error uploading images.';
+            }
+        });
+
+        imageInput.addEventListener('change', () => {
+            uploadButton.disabled = false;
+        });
+
+        fineTuneButton.addEventListener('click', async () => {
+            if (!usernameInput.value) return;
+            fineTuneButton.disabled = true;
+            messageElement.textContent = 'Starting fine-tuning process...';
+
+            try {
+                const response = await fetch('/fine-tune', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username: usernameInput.value })
+                });
+                const data = await response.json();
+                if (data.error) {
+                    messageElement.textContent = data.error;
+                } else {
+                    messageElement.innerHTML = `
+                        <p>${data.message}</p>
+                        <p>Model name: ${data.model_name}</p>
+                        <p>Training URL: <a href="${data.training_url}" target="_blank">${data.training_url}</a></p>
+                        <p>The fine-tuning process has started. This may take a while. You can check the progress using the Training URL above.</p>
+                    `;
+
+                    // Poll for training completion
+                    const pollTraining = async () => {
+                        const trainingResponse = await fetch(`/training-status/${data.training_id}`);
+                        const trainingData = await trainingResponse.json();
+                        if (trainingData.error) {
+                            messageElement.innerHTML += `<p>Error: ${trainingData.error}</p>`;
+                            return;
+                        }
+                        if (trainingData.status === 'succeeded') {
+                            messageElement.innerHTML += `
+                                <p>Fine-tuning completed successfully!</p>
+                                <p>Model version: ${trainingData.model_version}</p>
+                            `;
+                        } else if (trainingData.status === 'failed') {
+                            messageElement.innerHTML += `<p>Fine-tuning failed. Please try again.</p>`;
+                        } else {
+                            const statusElement = document.getElementById('currentStatus');
+                            if (statusElement) {
+                                statusElement.textContent = `Current status: ${trainingData.status}`;
+                            } else {
+                                messageElement.innerHTML += `<p id="currentStatus">Current status: ${trainingData.status}</p>`;
+                            }
+                            setTimeout(pollTraining, 5000); // Poll every 5 seconds
+                        }
+                    };
+                    pollTraining();
+                }
+            } catch (error) {
+                messageElement.textContent = 'Error starting fine-tuning process.';
+            } finally {
+                fineTuneButton.disabled = false;
+                fineTuneSection.style.display = 'none';
+                uploadButton.disabled = false;
+            }
+        });
+
+        // New JavaScript code for using the fine-tuned model
+        const useModelForm = document.getElementById('useModelForm');
+        const modelNameInput = document.getElementById('modelName');
+        const modelVersionInput = document.getElementById('modelVersion');
+        const promptInput = document.getElementById('prompt');
+        const generateButton = document.getElementById('generateButton');
+        const generatedImageDiv = document.getElementById('generatedImage');
+
+        useModelForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            generateButton.disabled = true;
+            messageElement.textContent = 'Generating image...';
+            generatedImageDiv.innerHTML = '';
+
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model_name: modelNameInput.value,
+                        model_version: modelVersionInput.value,
+                        prompt: promptInput.value
+                    })
+                });
+                const data = await response.json();
+                if (data.image_url) {
+                    const img = document.createElement('img');
+                    img.src = data.image_url;
+                    generatedImageDiv.appendChild(img);
+                    messageElement.textContent = 'Image generated successfully.';
+                } else {
+                    messageElement.textContent = data.error || 'Error generating image.';
+                }
+            } catch (error) {
+                messageElement.textContent = 'Error generating image.';
+            } finally {
+                generateButton.disabled = false;
+            }
+        });
+
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tabcontent");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            tablinks = document.getElementsByClassName("tablinks");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.className += " active";
+            
+            // Clear the message only when switching from "Use Fine-tuned Model" to "Fine-tune Model"
+            if (tabName === 'FineTune') {
+                messageElement.textContent = '';
+                generatedImageDiv.innerHTML = '';
+            }
+        }
+
+        document.getElementById("defaultOpen").click();
+    </script>
+</body>
+</html>
